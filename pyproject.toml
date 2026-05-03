@@ -1,0 +1,73 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sagenet-dnnu"
+version = "0.1.0"
+description = "PCHIP-interpolated adaptive Simpson integrator that turns a SageNet SGWB spectrum into Delta N_eff (dnnu)."
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [
+    { name = "SageNet dnnu contributors" },
+]
+keywords = [
+    "cosmology",
+    "gravitational-waves",
+    "SGWB",
+    "Neff",
+    "BBN",
+    "SageNet",
+    "Simpson",
+    "PCHIP",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Astronomy",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+dependencies = [
+    "numpy>=1.20",
+    "scipy>=1.7",
+]
+
+[project.optional-dependencies]
+cobaya = [
+    "cobaya>=3.0",
+]
+test = [
+    "pytest>=7.0",
+]
+examples = [
+    "matplotlib>=3.4",
+]
+all = [
+    "cobaya>=3.0",
+    "pytest>=7.0",
+    "matplotlib>=3.4",
+]
+
+[project.urls]
+Homepage      = "https://github.com/your-org/sagenet-dnnu"
+Documentation = "https://github.com/your-org/sagenet-dnnu#readme"
+Repository    = "https://github.com/your-org/sagenet-dnnu"
+Issues        = "https://github.com/your-org/sagenet-dnnu/issues"
+
+[tool.setuptools]
+packages = ["sagenet_dnnu", "sagenet_dnnu.tests"]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["sagenet_dnnu/tests"]
+addopts = "-q"
