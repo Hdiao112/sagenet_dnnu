@@ -102,7 +102,7 @@ To install from a specific branch:
 pip install git+https://github.com/Hdiao112/sagenet-dnnu.git@main
 ```
 
-### Local development install
+### Local development install(Recommand)
 
 ```bash
 git clone https://github.com/Hdiao112/sagenet-dnnu.git
