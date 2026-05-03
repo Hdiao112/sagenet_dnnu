@@ -15,16 +15,16 @@
 [SageNet](https://github.com/) (`sagenetgw.classes.GWPredictor`) predicts a
 stochastic gravitational-wave background (SGWB) spectrum,
 
-\[
-(f,\log_{10}\Omega_\mathrm{GW}(f)).
-\]
-
+$$
+\Delta N_\mathrm{eff} \;=\; \frac{N_\mathrm{eff}^{(0)}}{\Omega_\nu h^2 / h^2}\;
+\ln 10 \int \Omega_\mathrm{GW}(\log_{10} f)\, \mathrm{d}(\log_{10} f).
+$$
 To use that spectrum in a BBN or Cobaya pipeline, one usually needs to
 compress it into a single effective radiation variable,
 
-\[
+$$
 \Delta N_\mathrm{eff},
-\]
+$$
 
 called **`dnnu`** in this package.
 
@@ -92,19 +92,19 @@ SageNet predictor directly.
 ### From GitHub
 
 ```bash
-pip install git+https://github.com/<your-user-or-org>/sagenet-dnnu.git
+pip install git+https://github.com/Hdiao112/sagenet-dnnu.git
 ```
 
 To install from a specific branch:
 
 ```bash
-pip install git+https://github.com/<your-user-or-org>/sagenet-dnnu.git@main
+pip install git+https://github.com/Hdiao112/sagenet-dnnu.git@main
 ```
 
 ### Local development install
 
 ```bash
-git clone https://github.com/<your-user-or-org>/sagenet-dnnu.git
+git clone https://github.com/Hdiao112/sagenet-dnnu.git
 cd sagenet-dnnu
 pip install -e .
 ```
@@ -153,7 +153,7 @@ predictor = GWPredictor(model_type="Transformer", device="cpu")
 prediction = predictor.predict({
     "r":         3.9585109e-05,
     "n_t":       1.0116972,
-    "kappa10":   110.42477,
+    "kappa10":   1.42477,
     "T_re":      0.17453859,
     "DN_re":     39.366618,
     "Omega_bh2": 0.0223828,
@@ -195,7 +195,7 @@ from sagenet_dnnu import compute_dnnu_from_predictor
 params = {
     "r":         3.9585109e-05,
     "n_t":       1.0116972,
-    "kappa10":   110.42477,
+    "kappa10":   1.42477,
     "T_re":      0.17453859,
     "DN_re":     39.366618,
     "Omega_bh2": 0.0223828,
