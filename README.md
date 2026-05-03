@@ -1,9 +1,10 @@
 # sagenet-dnnu
 
-> **PCHIP-interpolated adaptive Simpson integrator for SageNet SGWB spectra.**
-> Turns a `GWPredictor` prediction into ΔNₑff (`dnnu`) — robustly, in one line.
+> **Fast and robust integration of SageNet SGWB spectra into**
+> \(\Delta N_\mathrm{eff}\) **for parameter scans, MCMC exploration, and
+> Cobaya-style pipelines.**
 
-[![tests](https://github.com/your-org/sagenet-dnnu/actions/workflows/tests.yml/badge.svg)](https://github.com/your-org/sagenet-dnnu/actions/workflows/tests.yml)
+[![tests](https://github.com/<your-user-or-org>/sagenet-dnnu/actions/workflows/tests.yml/badge.svg)](https://github.com/<your-user-or-org>/sagenet-dnnu/actions/workflows/tests.yml)
 [![python](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://www.python.org/downloads/)
 [![license: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
@@ -12,81 +13,143 @@
 ## What this is
 
 [SageNet](https://github.com/) (`sagenetgw.classes.GWPredictor`) predicts a
-stochastic gravitational-wave background (SGWB) spectrum
-`(f, log10ΩGW(f))`. To use that spectrum in a BBN / Cobaya pipeline you
-typically need to integrate it into a single number — the extra effective
-relativistic species `ΔNₑff`, here called **`dnnu`**.
+stochastic gravitational-wave background (SGWB) spectrum,
 
-Naively, that integral is
+\[
+(f,\log_{10}\Omega_\mathrm{GW}(f)).
+\]
 
-$$
-\Delta N_\mathrm{eff} \;=\; \frac{N_\mathrm{eff}^{(0)}}{\Omega_\nu h^2 / h^2}\;
-\ln 10 \int \Omega_\mathrm{GW}(\log_{10} f)\, \mathrm{d}(\log_{10} f).
-$$
+To use that spectrum in a BBN or Cobaya pipeline, one usually needs to
+compress it into a single effective radiation variable,
 
-In practice running plain `scipy.integrate.simpson` or `numpy.trapz` on the
-raw SageNet output is fragile: SageNet returns a non-uniform grid with
-extra samples around peaks, the spectrum spans many decades in `ΩGW`, and
-Simpson's parabolic fit can **go negative** between samples on a sharp peak
-(see *Why this exists* below).
+\[
+\Delta N_\mathrm{eff},
+\]
 
-This package implements the integration recipe used in production by the
-upstream Cobaya theory in `sagenet_final.py`, and ships it as a clean,
-standalone, testable Python module:
+called **`dnnu`** in this package.
 
-- **PCHIP** (shape-preserving cubic Hermite) interpolation in `log10Ω`-domain — never overshoots, never produces negative values.
-- **Adaptive Simpson** with local-error control — refines automatically wherever the spectrum is curved.
-- **Physics-driven dynamic tolerance** — you specify the absolute tolerance you want on `dnnu`; the integrator computes the corresponding raw-integral atol (which depends on `H₀`).
-- **Trapezoid fallback** — if Simpson fails to converge, the result is recomputed by trapezoid on every point Simpson actually visited. Strictly non-negative.
-- **`f`-mode auto-detection** — feed it `f` in Hz or already in `log10(f)`; it figures out which.
+`sagenet-dnnu` provides a standalone, testable integration module that turns a
+SageNet SGWB spectrum into \(\Delta N_\mathrm{eff}\). It is designed for
+large-scale applications where repeatedly running a direct numerical SGWB/ODE
+backend would be too expensive, such as:
 
-Everything is implemented in pure NumPy + SciPy. No GPU, no `cobaya`, no `sagenetgw` required for the integrator itself.
+- fast parameter-space scans,
+- MCMC exploration,
+- gate screening,
+- trend studies,
+- identification of physically interesting regions for numerical follow-up.
+
+The package implements the SGWB-to-\(\Delta N_\mathrm{eff}\) integration recipe
+used in the upstream Cobaya theory pipeline, but exposes it as a clean Python
+API independent of `cobaya` and independent of `sagenetgw` at import time.
+
+---
+
+## Why this package exists
+
+A naive direct application of `scipy.integrate.simpson` or `numpy.trapz` to the
+raw SageNet output can be numerically fragile. The main difficulties are:
+
+1. SageNet returns a non-uniform frequency grid.
+2. The grid often contains extra samples around spectral features.
+3. \(\Omega_\mathrm{GW}\) spans many orders of magnitude.
+4. Polynomial Simpson interpolation on a sharp peak can become unstable on a
+   non-uniform grid.
+5. A fixed absolute integration tolerance does not correspond to the same
+   tolerance in \(\Delta N_\mathrm{eff}\) for different cosmological parameters.
+
+`sagenet-dnnu` addresses these issues using:
+
+- **PCHIP interpolation in the \(\log_{10}\Omega_\mathrm{GW}\) domain**  
+  Shape-preserving interpolation avoids artificial overshoot and keeps the
+  reconstructed SGWB integrand positive.
+
+- **Adaptive Simpson integration with local error control**  
+  The integrator refines the curve where the SGWB spectrum is curved or sharply
+  peaked.
+
+- **A physics-driven tolerance**  
+  The user specifies the desired absolute tolerance on \(\Delta N_\mathrm{eff}\).
+  The code converts this into the corresponding raw-integral tolerance for the
+  current cosmological parameters.
+
+- **A non-negative trapezoid fallback**  
+  If adaptive Simpson fails to converge or returns an invalid result, the code
+  falls back to trapezoid integration on the refined grid visited by Simpson.
+
+- **Automatic frequency-mode detection**  
+  The input frequency array can be either linear frequency \(f\) or already
+  \(\log_{10}f\). The detected mode is recorded in the diagnostics.
+
+The integrator itself uses only NumPy and SciPy. It does not require `cobaya`
+or `sagenetgw` unless you want to use the optional Cobaya adapter or call a
+SageNet predictor directly.
 
 ---
 
 ## Install
 
+### From GitHub
+
 ```bash
-pip install sagenet-dnnu
+pip install git+https://github.com/<your-user-or-org>/sagenet-dnnu.git
 ```
 
-Or, from a clone of this repo:
+To install from a specific branch:
 
 ```bash
-git clone https://github.com/your-org/sagenet-dnnu.git
+pip install git+https://github.com/<your-user-or-org>/sagenet-dnnu.git@main
+```
+
+### Local development install
+
+```bash
+git clone https://github.com/<your-user-or-org>/sagenet-dnnu.git
 cd sagenet-dnnu
 pip install -e .
 ```
 
-Optional extras:
+### PyPI install
 
-| Extra      | Adds                              | Use when                                       |
-| ---------- | --------------------------------- | ---------------------------------------------- |
-| `[cobaya]` | `cobaya`                          | you want to use `SageNetDnnuTheory` in a Cobaya run. |
-| `[test]`   | `pytest`                          | you want to run the test suite.                |
-| `[examples]` | `matplotlib`                    | you want to run the plotting example.          |
-| `[all]`    | all of the above                  | one-liner install for development.             |
+After the package is published to PyPI, it can be installed with:
 
 ```bash
-pip install "sagenet-dnnu[all]"
+pip install sagenet-dnnu
 ```
 
-> SageNet itself (`sagenetgw`) is **not** a dependency of this package. You only need it if you want to actually call `predictor.predict(...)`. The integrator works on any `(f, log10ΩGW)` arrays.
+### Optional extras
+
+| Extra        | Adds         | Use when |
+| ------------ | ------------ | -------- |
+| `[cobaya]`   | `cobaya`     | you want to use `SageNetDnnuTheory` in a Cobaya run |
+| `[test]`     | `pytest`     | you want to run the test suite |
+| `[examples]` | `matplotlib` | you want to run plotting examples |
+| `[all]`      | all of above | one-line install for development |
+
+```bash
+pip install -e ".[all]"
+```
+
+> SageNet itself (`sagenetgw`) is **not** a core dependency of this package.
+> You only need it if you want to call `GWPredictor.predict(...)`. The
+> integrator works on any compatible `(f, log10OmegaGW)` arrays.
 
 ---
 
 ## Quick start
 
-The snippet below is exactly the SageNet example you already have, with one extra line at the end:
+The example below follows the standard SageNet usage pattern and adds one
+integration step.
 
 ```python
 from sagenetgw.classes import GWPredictor
 import numpy as np
 from matplotlib import pyplot as plt
 
-from sagenet_dnnu import compute_dnnu          # <-- new
+from sagenet_dnnu import compute_dnnu
 
 predictor = GWPredictor(model_type="Transformer", device="cpu")
+
 prediction = predictor.predict({
     "r":         3.9585109e-05,
     "n_t":       1.0116972,
@@ -99,131 +162,246 @@ prediction = predictor.predict({
     "A_s":       2.100549e-9,
 })
 
-# ---- new: integrate the spectrum into ΔN_eff ----
+# Integrate the SGWB spectrum into Delta N_eff.
 result = compute_dnnu(prediction, H0=67.32117)
+
 print("dnnu =", result.dnnu)
+print("g2   =", result.g2)
 print("method:", result.diagnostics["simpson_method_final"])
-# -------------------------------------------------
 
 pred_coords = np.column_stack((prediction["f"], prediction["log10OmegaGW"]))
 plt.plot(pred_coords[:, 0], pred_coords[:, 1], "--",
          color="royalblue", marker=".")
+plt.xlabel("f or log10(f)")
+plt.ylabel("log10 Omega_GW")
+plt.show()
 ```
 
-That's it. `result` is an `IntegrationResult` with three fields:
+The returned object is an `IntegrationResult`:
 
 ```python
-result.dnnu          # ΔN_eff (the number you usually want)
-result.g2            # the raw integral g2 = ln(10) * ∫ Ω d(log10 f)
-result.diagnostics   # dict with f-mode, atol used, trapz baseline,
-                     # convergence flag, eval count, ...
+result.dnnu          # Delta N_eff
+result.g2            # raw SGWB integral after conversion
+result.diagnostics   # machine-readable diagnostics
 ```
 
-### One-shot: predict + integrate
+---
+
+## One-shot: predict and integrate
 
 ```python
 from sagenet_dnnu import compute_dnnu_from_predictor
 
-result = compute_dnnu_from_predictor(predictor, {
-    "r": ..., "n_t": ..., "kappa10": ...,
-    "H0": 67.32117,    # required key
-    ...
-})
+params = {
+    "r":         3.9585109e-05,
+    "n_t":       1.0116972,
+    "kappa10":   110.42477,
+    "T_re":      0.17453859,
+    "DN_re":     39.366618,
+    "Omega_bh2": 0.0223828,
+    "Omega_ch2": 0.1201075,
+    "H0":        67.32117,
+    "A_s":       2.100549e-9,
+}
+
+result = compute_dnnu_from_predictor(predictor, params)
+print(result.dnnu)
 ```
-
-### Raw arrays, without a SageNet prediction dict
-
-```python
-result = compute_dnnu(f_array, log10OmegaGW_array, H0=67.32)
-```
-
-`f_array` may be either linear Hz (e.g. `1e-12 .. 1e8`) or already log10
-(e.g. `-12 .. 8`). The integrator detects this from the value range; the
-detected mode is reported in `result.diagnostics["f_mode"]`.
 
 ---
 
-## Why this exists — algorithm in 1 minute
+## Raw-array usage
 
-The upstream Cobaya theory shipped a hand-rolled integrator inside
-`sagenet_final.py`. This repo extracts that integrator, documents it,
-tests it, and packages it. The choices it makes are not arbitrary; they
-fix concrete numerical failure modes.
+You can also use the integrator without SageNet:
 
-### Failure mode 1: Simpson gives negative integrals
+```python
+from sagenet_dnnu import compute_dnnu
 
-Simpson fits a parabola through three samples. On a non-uniform grid that
-straddles a sharp SGWB peak, the parabola can dip below zero between
-samples, so the *integral* of a strictly positive spectrum comes out
-negative. Empirically this happens on a substantial fraction of SageNet
-outputs (`native_neg_count: 11721 / 13184` rows in one validation set).
-
-**Fix:** interpolate `log10ΩGW` with PCHIP (shape-preserving — provably
-no overshoot), exponentiate, and integrate that. PCHIP guarantees the
-integrand is `> 0` everywhere, so Simpson on the interpolated curve is
-also positive. The same validation set drops to `Inter_neg_count: 0`.
-
-### Failure mode 2: fixed tolerances are wrong by orders of magnitude
-
-A point in parameter space with `H₀ = 60` and another with `H₀ = 80`
-need different raw-integral tolerances to hit the same precision on
-`dnnu`. Hard-coding a Simpson `atol` either over-spends compute on easy
-points or under-resolves hard ones.
-
-**Fix:** the user specifies `dnnu_tol_abs` (absolute tolerance on the
-final `ΔNₑff`). The integrator translates that into the equivalent
-raw-integral atol *for the current* `H₀`, every call:
-
-```
-g2_atol     = dnnu_tol_abs * (Ω_ν h² / h²) / N_eff⁰
-I_raw_atol  = g2_atol / ln 10
+result = compute_dnnu(
+    f_array,
+    log10OmegaGW_array,
+    H0=67.32,
+)
 ```
 
-### Failure mode 3: Simpson refuses to converge
+`f_array` may be either linear frequency, for example
 
-Pathological spectra (`max_evals` exceeded, or `S < 0` survives despite
-PCHIP) trigger a fallback: trapezoid integration over **the points
-Simpson already evaluated**. This is monotonic in the integrand and
-strictly non-negative, so it always returns a sane answer.
-
-### Validation against numerical ODE backend
-
-From the upstream error analysis (`Sagenet_dnnu vs Numerical dnnu`):
-
-```
-Comparison vs PartheNoPE numerical backend, positive-dnnu sample (10k):
-                Simpson (PCHIP)   Trapz (raw)     Winner
-  H2/H          1.14e-04          1.15e-04        Simpson
-  Y_p           4.81e-05          4.85e-05        Simpson
-  He3/H         4.13e-05          4.17e-05        Simpson
-  Li7/H         8.88e-05          8.98e-05        Simpson
-
-Negative-dnnu sample (i.e. raw Simpson would have gone negative):
-  H2/H          1.48e-03          1.52e-03        Simpson (PCHIP)
-  Y_p           4.82e-04          4.95e-04        Simpson (PCHIP)
-  He3/H         7.06e-04          7.29e-04        Simpson (PCHIP)
-  Li7/H         1.30e-03          1.33e-03        Simpson (PCHIP)
+```text
+1e-18, 1e-17, ..., 1e-3
 ```
 
-Errors are below the BBN observational uncertainties for D/H, Yp, ³He/H,
-⁷Li/H in essentially all sampled configurations.
+or already \(\log_{10}f\), for example
+
+```text
+-18, -17, ..., -3
+```
+
+The detected mode is stored in:
+
+```python
+result.diagnostics["f_mode"]
+```
+
+---
+
+## Scope and limitations
+
+`sagenet-dnnu` is intended as a **fast SGWB-to-\(\Delta N_\mathrm{eff}\)
+reconstruction tool** for SageNet-based workflows.
+
+It is suitable for common large-scale research tasks such as:
+
+- broad parameter-space scans,
+- MCMC exploration,
+- fast likelihood evaluation,
+- gate screening,
+- trend studies,
+- locating interesting regions for more expensive numerical follow-up.
+
+It should not be interpreted as proving that a SageNet-based pipeline is
+numerically identical to a direct SGWB/ODE solver at every point. The difference
+between
+
+\[
+\Delta N_\mathrm{eff}^{\rm SageNet+sagenet\text{-}dnnu}
+\]
+
+and
+
+\[
+\Delta N_\mathrm{eff}^{\rm numerical\ SGWB/ODE}
+\]
+
+is a **total emulator-to-solver discrepancy**. It can include:
+
+- SageNet spectral-emulation error,
+- frequency-grid and interpolation differences,
+- convention differences between pipelines,
+- residual numerical-solver uncertainty,
+- and the much smaller internal quadrature uncertainty of `sagenet-dnnu`.
+
+In the validation samples considered here, this total discrepancy is usually
+small compared with the current observational error budget and is not expected
+to produce conclusion-level changes in broad scans or trend analyses. However,
+important scientific points should still be checked with the direct numerical
+backend.
+
+We recommend direct numerical re-evaluation for:
+
+- final best-fit or benchmark points,
+- posterior-tail points,
+- samples close to hard selection boundaries,
+- regions near the edge of the SageNet training domain,
+- future CMB-S4-level or other high-precision forecast studies.
+
+---
+
+## Validation strategy
+
+We validate the package at two different levels.
+
+### 1. Internal quadrature stability
+
+First, we test the stability of the integrator itself by comparing:
+
+- default integration settings,
+- tightened-tolerance settings,
+- and stored Simpson-integrated values from the upstream pipeline.
+
+In physically relevant regions, this internal integration difference is
+typically at the \(\mathcal{O}(10^{-4})\) level or smaller in
+\(\Delta N_\mathrm{eff}\). This is well below the current observational
+uncertainty scale for \(N_\mathrm{eff}\), so the quadrature error of the
+integrator is negligible for current broad-scan applications.
+
+### 2. Comparison with a direct numerical SGWB/ODE backend
+
+Second, we compare the full SageNet-based reconstruction against a direct
+numerical SGWB/ODE backend. This comparison is not a pure integration-error
+test. It measures the total SageNet-to-numerical discrepancy.
+
+In the tested sample, this discrepancy is typically at the
+
+\[
+\mathcal{O}(10^{-3})-\mathcal{O}(10^{-2})
+\]
+
+level in \(\Delta N_\mathrm{eff}\). For current Planck/BAO/BBN-level
+applications, this is usually subdominant to the observational error budget and
+is suitable for broad scans, MCMC exploration, gate screening, and trend
+studies.
+
+This does **not** mean that the SageNet-based reconstruction should be treated
+as a high-precision drop-in replacement for the direct numerical SGWB/ODE solver
+in all cases. Rather, it provides a fast and validated surrogate for large-scale
+exploration, with numerical re-evaluation recommended for key points.
+
+### 3. Hard-boundary check
+
+The numerical pipeline uses
+
+\[
+\Delta N_\mathrm{eff} = 5
+\]
+
+as a hard boundary in the tested setup. In the 50k-sample SageNet validation
+set used for this hard-boundary check, all SageNet-integrated points satisfied
+
+\[
+\Delta N_\mathrm{eff} - 5 \le 0 .
+\]
+
+Thus, within this tested sample, the SageNet-based reconstruction did not
+spuriously cross the numerical hard boundary \(\Delta N_\mathrm{eff}=5\).
+
+### 4. Downstream BBN-abundance checks
+
+The upstream validation also checks the impact of the SGWB-to-\(\Delta
+N_\mathrm{eff}\) reconstruction on downstream BBN abundance predictions. In
+the tested samples, the abundance-level differences induced by the
+SageNet-based reconstruction are generally smaller than the current
+observational error budget. This supports using `sagenet-dnnu` for broad scans
+and MCMC exploration, while retaining direct numerical SGWB/ODE re-evaluation
+for final benchmark, boundary, and high-precision forecast points.
+
+---
+
+## Algorithm in one minute
+
+The SGWB contribution is obtained by integrating the predicted spectrum over
+\(\log_{10}f\). In practice, the implementation proceeds as follows:
+
+1. Clean the input arrays: remove non-finite values, sort by frequency, and
+   merge duplicated frequency points.
+2. Detect whether the input frequency is linear \(f\) or already
+   \(\log_{10}f\).
+3. Interpolate \(\log_{10}\Omega_\mathrm{GW}\) using PCHIP.
+4. Exponentiate the interpolant to obtain a positive SGWB integrand.
+5. Integrate with adaptive Simpson using a tolerance derived from the requested
+   absolute tolerance on \(\Delta N_\mathrm{eff}\).
+6. If Simpson fails or returns an invalid value, fall back to trapezoid
+   integration on the refined points already evaluated.
+7. Convert the raw integral to \(\Delta N_\mathrm{eff}\).
+
+The diagnostics record the detected frequency mode, integration method,
+tolerances, convergence status, number of evaluations, and fallback usage.
 
 ---
 
 ## Tuning: `IntegratorConfig`
 
-Defaults match the upstream pipeline byte-for-byte. Override only if you
-know what you're doing.
+Defaults are chosen to match the upstream production pipeline. Most users should
+not need to change them.
 
 ```python
 from sagenet_dnnu import IntegratorConfig, compute_dnnu
 
 cfg = IntegratorConfig(
-    dnnu_tol_abs=1e-7,         # tighter -> more compute, more precision
+    dnnu_tol_abs=1e-7,          # tighter -> more compute, smaller quadrature error
     simpson_rtol=1e-6,
     simpson_max_depth=40,
     simpson_max_evals=1_000_000,
-    edge_trim=0.0,             # trim x-range by this many decades on each end
+    edge_trim=0.0,
     clamp_log10omega_nonfinite_to=-300.0,
     fallback_to_trapz_on_fail=True,
 )
@@ -232,116 +410,180 @@ result = compute_dnnu(prediction, H0=67.32, config=cfg)
 ```
 
 | Field | Default | Meaning |
-| --- | --- | --- |
-| `dnnu_tol_abs` | `1e-6` | Absolute tolerance on the final `dnnu`. The Simpson `atol` is derived from this. |
-| `simpson_rtol` | `1e-5` | Relative tolerance for adaptive Simpson. |
-| `simpson_max_depth` | `35` | Max recursion depth. |
-| `simpson_max_evals` | `500 000` | Hard cap on integrand evaluations. |
-| `edge_trim` | `0.0` | Drop `edge_trim` units of `log10(f)` from each end before integrating. Diagnostic only. |
-| `clamp_log10omega_nonfinite_to` | `-300.0` | Replace non-finite `log10ΩGW` with this (effectively zero contribution). |
-| `fallback_to_trapz_on_fail` | `True` | If Simpson fails or returns `< 0`, fall back to trapezoid on already-evaluated points. |
+| --- | ---: | --- |
+| `dnnu_tol_abs` | `1e-6` | Absolute tolerance target on final `dnnu` |
+| `simpson_rtol` | `1e-5` | Relative tolerance for adaptive Simpson |
+| `simpson_max_depth` | `35` | Maximum recursion depth |
+| `simpson_max_evals` | `500000` | Hard cap on integrand evaluations |
+| `edge_trim` | `0.0` | Optional trim in `log10(f)` units at both edges |
+| `clamp_log10omega_nonfinite_to` | `-300.0` | Replacement for non-finite `log10OmegaGW` values |
+| `fallback_to_trapz_on_fail` | `True` | Use refined-grid trapezoid fallback if Simpson fails |
 
 ---
 
 ## Diagnostics
 
-Every call returns a `diagnostics` dict. The fields are stable and
-machine-readable — handy for Cobaya runs that want to log per-point
-behaviour.
+Every call returns a diagnostics dictionary. These fields are designed to be
+machine-readable and useful in Cobaya runs.
+
+Example:
 
 ```python
 {
-    "f_mode": "converted_linear_f_to_log10",    # or "assume_log10f_by_range" etc.
+    "f_mode": "assume_log10f_nonpositive_seen",
+    "n_input_points": 256,
+    "n_clean_points": 256,
     "dnnu_tol_abs": 1e-6,
-    "simpson_atol_raw_from_dnnu": 7.43e-09,
-    "g2_trapz": 1.234e-09,                      # baseline trapz on native grid
-    "g2_simpson_local_final": 1.235e-09,        # Simpson (or trapz fallback) result
-    "g2_rel_diff": 8.1e-04,                     # (Simpson - trapz) / trapz
-    "simpson_method_final": "simpson_local",    # or "trapz_refined_fallback"
+    "simpson_atol_raw_from_dnnu": 5.38e-12,
+    "g2_trapz": 2.92e-05,
+    "g2_simpson_local_final": 2.91e-05,
+    "g2_rel_diff": -3.71e-03,
+    "simpson_method_final": "simpson_local",
     "simpson_fallback_used": False,
     "simpson_converged": True,
-    "simpson_eval_count": 137,
-    "simpson_accepted_intervals": 67,
-    "simpson_split_events": 70,
-    "simpson_max_depth_used": 12,
-    "simpson_err_est": 4.2e-12,
-    # ...
+    "simpson_eval_count": 945,
+    "simpson_accepted_intervals": 236,
+    "simpson_split_events": 235,
+    "simpson_max_depth_used": 16,
+    "simpson_err_est": 3.0e-10,
 }
 ```
+
+The most useful fields are:
+
+| Field | Meaning |
+| --- | --- |
+| `f_mode` | How the input frequency was interpreted |
+| `n_clean_points` | Number of points used after cleaning |
+| `g2_trapz` | Native-grid trapezoid baseline |
+| `g2_simpson_local_final` | Final Simpson or fallback result |
+| `g2_rel_diff` | Relative difference between final and native trapz estimate |
+| `simpson_method_final` | Final integration path |
+| `simpson_fallback_used` | Whether fallback was used |
+| `simpson_converged` | Whether adaptive Simpson converged |
+| `simpson_eval_count` | Number of function evaluations |
+| `simpson_err_est` | Internal Simpson error estimate |
 
 ---
 
 ## Cobaya integration
 
-If you previously used `sagenet_final.py::SageNetTheoryFinal`, swap the
-import:
+If you previously used the upstream `SageNetTheoryFinal`-style Cobaya theory,
+you can use the optional adapter:
 
 ```yaml
-# my_cobaya.yaml
 theory:
   sagenet_dnnu.cobaya_theory.SageNetDnnuTheory:
-    # no extra fields needed; configure via env vars below
+    # configure via environment variables if needed
 ```
 
-Environment variables (all optional, all default to the upstream defaults):
+Environment variables:
 
+```text
+SAGENET_DEVICE                  cuda | cpu       default: cuda
+SAGENET_BACKEND                 parth | alterbbn default: parth
+SAGENET_GUARD_MODE              hard | soft      default: hard
+SAGENET_DNNU_TOL_ABS            float            default: 1e-6
+SAGENET_SIMPSON_RTOL            float            default: 1e-5
+SAGENET_SIMPSON_MAX_DEPTH       int              default: 35
+SAGENET_SIMPSON_MAX_EVALS       int              default: 500000
+SAGENET_DNNU_MAX_LEGACY         float            default: 5.0
+SAGENET_DNNU_MAX_STRICT         float            default: 1.0
+SAGENET_ETA10_MAX_HARD          float            default: 9.0
 ```
-SAGENET_DEVICE                  cuda | cpu       (default: cuda)
-SAGENET_BACKEND                 parth | alterbbn (default: parth)
-SAGENET_GUARD_MODE              hard | soft      (default: hard)
-SAGENET_DNNU_TOL_ABS            float            (default: 1e-6)
-SAGENET_SIMPSON_RTOL            float            (default: 1e-5)
-SAGENET_SIMPSON_MAX_DEPTH       int              (default: 35)
-SAGENET_SIMPSON_MAX_EVALS       int              (default: 500000)
-SAGENET_DNNU_MAX_LEGACY         float            (default: 5.0)   # always: dnnu>this -> reject
-SAGENET_DNNU_MAX_STRICT         float            (default: 1.0)   # used by hard/soft modes
-SAGENET_ETA10_MAX_HARD          float            (default: 9.0)   # only hard+parth
-```
 
-Guard logic (kept identical to upstream `sagenet_final.py`):
+### Guard interpretation
 
-| Mode | Backend | Reject when |
-| ---- | ------- | ----------- |
-| any | any | `dnnu > 5` (legacy gate, always on) |
-| `hard` | `parth` | `dnnu > 1` **or** `eta10 > 9` |
-| `hard` | `alterbbn` | `dnnu > 1` |
-| `soft` | `parth` | `dnnu > 1` |
-| `soft` | `alterbbn` | (only legacy gate) |
+The legacy ceiling
+
+\[
+\Delta N_\mathrm{eff} > 5
+\]
+
+is treated here as the hard numerical boundary used by the tested pipeline.
+
+Some upstream configurations also use a stricter
+
+\[
+\Delta N_\mathrm{eff} > 1
+\]
+
+guard. This stricter guard is project-specific and should be understood as a
+conservative domain-control choice for selected backends, training ranges, or
+pipeline configurations. It should **not** be read as a universal physical
+boundary.
+
+| Guard | Interpretation |
+| --- | --- |
+| `dnnu > 5` | Legacy numerical hard boundary used in this pipeline |
+| `dnnu > 1` | Optional project-specific conservative guard |
+| `eta10 > 9` | Optional backend-specific guard for selected PArthENoPE-style configurations |
 
 ---
 
 ## API reference
 
+Top-level API:
+
 ```python
-# Top-level
-compute_dnnu(prediction_or_f, log10OmegaGW=None, *, H0, config=None) -> IntegrationResult
-compute_dnnu_from_predictor(predictor, params, *, config=None) -> IntegrationResult
-compute_g2(f_like, log10OmegaGW_like, *, H0, config=None) -> (g2, diagnostics)
+compute_dnnu(prediction_or_f, log10OmegaGW=None, *, H0, config=None)
+compute_dnnu_from_predictor(predictor, params, *, config=None)
+compute_g2(f_like, log10OmegaGW_like, *, H0, config=None)
+```
 
-# Config / result
-IntegratorConfig(dnnu_tol_abs=..., simpson_rtol=..., ...)
-IntegrationResult(dnnu, g2, diagnostics)
+Returned object:
 
-# Lower-level building blocks (advanced)
-InterpLogOmegaPCHIP(x, ylog)               # callable: omega(x_query)
-adaptive_simpson_interpolated(f, a, b, ...) # bring your own integrand
-maybe_log10f(f) -> (log10f, mode_str)
+```python
+IntegrationResult(
+    dnnu,        # Delta N_eff
+    g2,          # converted raw integral
+    diagnostics  # dict
+)
+```
+
+Configuration:
+
+```python
+IntegratorConfig(
+    dnnu_tol_abs=...,
+    simpson_rtol=...,
+    simpson_max_depth=...,
+    simpson_max_evals=...,
+    edge_trim=...,
+    clamp_log10omega_nonfinite_to=...,
+    fallback_to_trapz_on_fail=...,
+)
+```
+
+Lower-level utilities:
+
+```python
+InterpLogOmegaPCHIP(x, ylog)
+adaptive_simpson_interpolated(f, a, b, ...)
+maybe_log10f(f)
 clean_sort_unique(x, y, *, clamp_y_nonfinite_to=-300.0)
 simpson_atol_from_dnnu_tol(H0, dnnu_tol_abs)
 g2_to_dnnu(g2, H0)
+```
 
-# Constants
-Neff0, Omega_nh2, ln10
+Constants:
+
+```python
+Neff0
+Omega_nh2
+ln10
 ```
 
 ---
 
 ## Examples
 
-| File | What it does |
-| ---- | ------------ |
-| [`examples/01_minimal.py`](examples/01_minimal.py) | Predict + integrate + plot. |
-| [`examples/02_advanced.py`](examples/02_advanced.py) | Custom `IntegratorConfig`, parameter sweep. |
+| File | Description |
+| --- | --- |
+| [`examples/01_minimal.py`](examples/01_minimal.py) | Predict, integrate, and plot |
+| [`examples/02_advanced.py`](examples/02_advanced.py) | Custom `IntegratorConfig` and parameter sweep |
+
+Run:
 
 ```bash
 python examples/01_minimal.py
@@ -358,28 +600,30 @@ pytest -q
 
 The test suite covers:
 
-- f-mode detection (Hz vs log10),
-- input cleaning (NaN/Inf handling, dedup, sort),
-- the dnnu ⇄ atol round-trip,
-- PCHIP edge clamping and positivity,
-- adaptive Simpson on a constant and on a polynomial (analytical truth),
-- end-to-end on a log-Gaussian SGWB toy spectrum (analytical truth, low- and high-precision configs),
-- robustness on irregular spike-grids,
-- API error cases (missing keys, conflicting argument forms).
+- frequency-mode detection,
+- input cleaning,
+- duplicate handling,
+- NaN/Inf handling,
+- \(\Delta N_\mathrm{eff}\)-to-tolerance conversion,
+- PCHIP positivity,
+- adaptive Simpson on analytic functions,
+- end-to-end toy SGWB spectra,
+- irregular spike-grid robustness,
+- API error cases.
 
 ---
 
 ## Project layout
 
-```
+```text
 sagenet-dnnu/
 ├── sagenet_dnnu/
 │   ├── __init__.py
-│   ├── api.py             # compute_dnnu, compute_g2, compute_dnnu_from_predictor
-│   ├── integrator.py      # PCHIP interp + adaptive Simpson
-│   ├── utils.py           # f-mode detect, cleaning, atol conversion
-│   ├── constants.py       # Neff0, Omega_nh2, ln10
-│   ├── cobaya_theory.py   # optional Cobaya `Theory` adapter
+│   ├── api.py
+│   ├── integrator.py
+│   ├── utils.py
+│   ├── constants.py
+│   ├── cobaya_theory.py
 │   └── tests/
 │       └── test_integrator.py
 ├── examples/
@@ -387,23 +631,54 @@ sagenet-dnnu/
 │   └── 02_advanced.py
 ├── pyproject.toml
 ├── LICENSE
+├── CHANGELOG.md
 └── README.md
 ```
 
 ---
 
-## Differences vs `sagenet_final.py`
+## Differences from the upstream Cobaya implementation
 
-If you're coming from the upstream file, here's what changed:
+Compared with the upstream monolithic theory file, this package makes the
+integration logic easier to reuse and test:
 
-1. **No `cobaya` / `sagenetgw` import at top level.** Both are optional now. The integrator runs on bare numpy/scipy.
-2. **No `utils_new.global_param` dependency.** The constants `Neff0`, `Omega_nh2`, `ln10` live in `sagenet_dnnu.constants` and are derivable.
-3. **No environment-variable side effects in the core API.** Defaults are real Python defaults via `IntegratorConfig`. Env vars only apply to the optional Cobaya adapter (where they preserve byte-for-byte upstream behaviour).
-4. **Public types.** `IntegrationResult` and `IntegratorConfig` replace the bare tuple `(g2, diag)`. The lower-level `compute_g2` still returns the tuple.
-5. **Tests + CI.** New.
-6. The Cobaya theory class was renamed `SageNetTheoryFinal` → `SageNetDnnuTheory` to flag the package boundary; behaviour is otherwise identical.
+1. **No mandatory `cobaya` or `sagenetgw` import at top level**  
+   Both are optional.
 
-The numerical algorithm — PCHIP-in-log10Ω, adaptive Simpson with local error control, dnnu-driven atol, trapz fallback — is byte-for-byte the same.
+2. **No runtime dependence on project-local `utils_new` modules**  
+   Constants and conversion utilities live inside `sagenet_dnnu`.
+
+3. **No environment-variable side effects in the core API**  
+   Core defaults are explicit Python defaults through `IntegratorConfig`.
+
+4. **Typed public result object**  
+   `IntegrationResult` replaces informal tuples.
+
+5. **Standalone tests and CI support**  
+   The numerical integration logic can be tested independently of a full
+   cosmology pipeline.
+
+6. **Optional Cobaya adapter**  
+   The adapter preserves the intended upstream behaviour while keeping the core
+   integrator independent.
+
+---
+
+## Recommended workflow
+
+For expensive SGWB+BBN studies, the recommended workflow is:
+
+1. Use SageNet + `sagenet-dnnu` for broad scans and MCMC exploration.
+2. Identify best-fit points, posterior-tail samples, boundary samples, and
+   interesting physical regions.
+3. Recompute representative key points with the direct numerical SGWB/ODE
+   backend.
+4. Use the numerical re-evaluation as a validation reference for final
+   scientific claims.
+
+This workflow preserves the speed advantage of the SageNet-based pipeline while
+avoiding the over-interpretation of emulator results as exact numerical-solver
+outputs.
 
 ---
 
@@ -411,7 +686,11 @@ The numerical algorithm — PCHIP-in-log10Ω, adaptive Simpson with local error 
 
 MIT — see [LICENSE](LICENSE).
 
+---
+
 ## Citation
 
-If you use this package in published work, please cite the SageNet paper
-along with this repository.
+If you use this package in published work, please cite the SageNet paper and
+this repository. If the package is used as part of a SGWB+BBN inference pipeline,
+please also describe whether final benchmark or boundary points were rechecked
+with the direct numerical backend.
