@@ -16,7 +16,7 @@
 stochastic gravitational-wave background (SGWB) spectrum,
 
 $$
-\Delta N_\mathrm{eff} \;=\; \frac{N_\mathrm{eff}^{(0)}}{\Omega_\nu h^2 / h^2}\;
+\Delta N_\mathrm{eff} \;=\; \frac{N_\mathrm{eff}^{(0)}}{\Omega_\nu h^2 / h^2}\,
 \ln 10 \int \Omega_\mathrm{GW}(\log_{10} f)\, \mathrm{d}(\log_{10} f).
 $$
 To use that spectrum in a BBN or Cobaya pipeline, one usually needs to
