@@ -40,6 +40,8 @@ DEFAULT_SIMPSON_MAX_EVALS: int = 500_000
 DEFAULT_EDGE_TRIM: float = 0.0
 DEFAULT_CLAMP_LOG10OMEGA_NONFINITE_TO: float = -300.0
 DEFAULT_FALLBACK_TRAPZ_ON_FAIL: bool = True
+DEFAULT_DNNU_MAX: Optional[float] = None
+DEFAULT_RETURN_NAN_IF_DNNU_EXCEEDS_MAX: bool = True
 
 
 @dataclass
@@ -73,6 +75,8 @@ class IntegratorConfig:
 
     dnnu_tol_abs: float = DEFAULT_DNNU_TOL_ABS
     simpson_rtol: float = DEFAULT_SIMPSON_RTOL
+    dnnu_max: Optional[float] = DEFAULT_DNNU_MAX
+    return_nan_if_dnnu_exceeds_max: bool = DEFAULT_RETURN_NAN_IF_DNNU_EXCEEDS_MAX
     simpson_max_depth: int = DEFAULT_SIMPSON_MAX_DEPTH
     simpson_max_evals: int = DEFAULT_SIMPSON_MAX_EVALS
     edge_trim: float = DEFAULT_EDGE_TRIM
@@ -279,9 +283,30 @@ def compute_dnnu(
         f_like = prediction_or_f
         log_like = log10OmegaGW
 
-    g2, diag = compute_g2(f_like, log_like, H0=H0, config=config)
-    dnnu = g2_to_dnnu(g2, H0)
-    return IntegrationResult(dnnu=float(dnnu), g2=float(g2), diagnostics=diag)
+        cfg = config or IntegratorConfig()
+
+    g2, diag = compute_g2(f_like, log_like, H0=H0, config=cfg)
+    dnnu_raw = float(g2_to_dnnu(g2, H0))
+
+    diag["dnnu_raw"] = float(dnnu_raw)
+    diag["dnnu_gate_enabled"] = cfg.dnnu_max is not None
+    diag["dnnu_max"] = None if cfg.dnnu_max is None else float(cfg.dnnu_max)
+    diag["dnnu_rejected_by_max_gate"] = False
+
+    if cfg.dnnu_max is not None and dnnu_raw > float(cfg.dnnu_max):
+        diag["dnnu_rejected_by_max_gate"] = True
+        diag["dnnu_reject_reason"] = (
+            f"dnnu_raw={dnnu_raw:.16e} exceeds dnnu_max={float(cfg.dnnu_max):.16e}"
+        )
+
+        if cfg.return_nan_if_dnnu_exceeds_max:
+            return IntegrationResult(
+                dnnu=float("nan"),
+                g2=float(g2),
+                diagnostics=diag,
+            )
+
+    return IntegrationResult(dnnu=float(dnnu_raw), g2=float(g2), diagnostics=diag)
 
 
 def compute_dnnu_from_predictor(
@@ -322,6 +347,8 @@ __all__ = [
     "DEFAULT_EDGE_TRIM",
     "DEFAULT_CLAMP_LOG10OMEGA_NONFINITE_TO",
     "DEFAULT_FALLBACK_TRAPZ_ON_FAIL",
+    "DEFAULT_DNNU_MAX",
+    "DEFAULT_RETURN_NAN_IF_DNNU_EXCEEDS_MAX",
     "IntegratorConfig",
     "IntegrationResult",
     "compute_g2",
