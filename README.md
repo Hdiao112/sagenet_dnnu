@@ -209,6 +209,123 @@ result = compute_dnnu_from_predictor(predictor, params)
 print(result.dnnu)
 ```
 
+if try to see how the threshold works, here's a group of params that should get dnnu > 5 and should return dnnu=nan：
+
+```python
+import os
+os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+
+import numpy as np
+from matplotlib import pyplot as plt
+
+from sagenetgw.classes import GWPredictor
+
+from sagenet_dnnu import compute_dnnu, IntegratorConfig
+
+
+# =============================================================================
+# 1. Test row (your row_index = 5632)
+# =============================================================================
+row = {
+    "row_index": 5632,
+    "omegabh2":      0.073688103,
+    "omegach2":      0.08447487,
+    "H0":            33.906496,
+    "ln10_10As":     3.8834262,
+    "log10r":       -33.99478,
+    "n_t":           4.2286621,
+    "log10kappa10": -0.49245602,
+    "log10Tre":      5.3597445,
+    "DN_re":         1.6802285,
+
+    # Stored CSV values, for comparison only.
+    "dnnu_simpson_local":   56.40103691845641,
+    "dnnu_trapz":           56.54147358465502,
+    "dnnu_simpson_uniform": 57.45712169635855,
+    "dn_nu_inputcol":       53.37966,
+}
+
+
+# =============================================================================
+# 2. Convert log10/cobaya-style row into SageNet predictor input
+# =============================================================================
+sagenet_params = {
+    "r":         10 ** float(row["log10r"]),
+    "n_t":       float(row["n_t"]),
+    "kappa10":   10 ** float(row["log10kappa10"]),
+    "T_re":      10 ** float(row["log10Tre"]),
+    "DN_re":     float(row["DN_re"]),
+    "Omega_bh2": float(row["omegabh2"]),
+    "Omega_ch2": float(row["omegach2"]),
+    "H0":        float(row["H0"]),
+    "A_s":       np.exp(float(row["ln10_10As"])) * 1e-10,
+}
+
+print(">>> Testing row_index =", row["row_index"])
+print("\n=== SageNet physical input params ===")
+for k, v in sagenet_params.items():
+    print(f"{k:10s} = {v:.16e}")
+
+
+# =============================================================================
+# 3. Run SageNet predictor
+# =============================================================================
+predictor = GWPredictor(model_type="Transformer", device="cpu")
+prediction = predictor.predict(sagenet_params)
+
+f = np.asarray(prediction["f"])
+log10OmegaGW = np.asarray(prediction["log10OmegaGW"])
+
+print("\n=== Raw SageNet prediction diagnostics ===")
+print("prediction keys:", list(prediction.keys()))
+print("f shape:", f.shape, "  log10OmegaGW shape:", log10OmegaGW.shape)
+print("f min/max:           ", np.nanmin(f), np.nanmax(f))
+print("log10OmegaGW min/max:", np.nanmin(log10OmegaGW), np.nanmax(log10OmegaGW))
+print("nan in f:", bool(np.isnan(f).any()),
+      "  nan in log10OmegaGW:", bool(np.isnan(log10OmegaGW).any()))
+
+
+# =============================================================================
+# 4. Configure the dnnu guard (NEW API)
+# -----------------------------------------------------------------------------
+# - reject_above_dnnu = 5.0  -> if dnnu > 5, mask result to NaN
+# - reject_below_dnnu = None -> no lower guard (default)
+# Diagnostics added when a guard trips:
+#       rejected (bool)
+#       rejected_reason (str, e.g. "dnnu>5")
+#       dnnu_raw (float, the un-masked value)
+#       reject_above_dnnu / reject_below_dnnu (echoed back)
+# =============================================================================
+config = IntegratorConfig(
+    reject_above_dnnu=5.0,
+    # reject_below_dnnu=1e-30,   # uncomment to also drop floor-noise points
+)
+
+
+# =============================================================================
+# 5. Integrate
+# =============================================================================
+result = compute_dnnu(
+    prediction,
+    H0=float(row["H0"]),
+    config=config,
+)
+
+print("\n=== sagenet_dnnu output ===")
+print("dnnu                 =", result.dnnu)
+print("g2                   =", result.g2)
+
+dnnu_raw = result.diagnostics["dnnu_raw"]
+print("dnnu_raw (pre-gate)  =", dnnu_raw)
+print("dnnu_is_nan          =", bool(np.isnan(result.dnnu)))
+print("rejected             =", result.diagnostics["rejected"])
+print("rejected_reason      =", result.diagnostics["rejected_reason"])
+print("reject_above_dnnu    =", result.diagnostics["reject_above_dnnu"])
+print("reject_below_dnnu    =", result.diagnostics["reject_below_dnnu"])
+```
+
 ---
 
 ## Raw-array usage
