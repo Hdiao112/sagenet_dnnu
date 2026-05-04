@@ -40,8 +40,11 @@ DEFAULT_SIMPSON_MAX_EVALS: int = 500_000
 DEFAULT_EDGE_TRIM: float = 0.0
 DEFAULT_CLAMP_LOG10OMEGA_NONFINITE_TO: float = -300.0
 DEFAULT_FALLBACK_TRAPZ_ON_FAIL: bool = True
-DEFAULT_DNNU_MAX: Optional[float] = None
-DEFAULT_RETURN_NAN_IF_DNNU_EXCEEDS_MAX: bool = True
+# Physical guards on the final dnnu. ``None`` keeps the legacy behaviour
+# (no guard); the conventional cosmological cut is 5.0 (legacy gate from
+# the upstream Cobaya theory).
+DEFAULT_REJECT_ABOVE_DNNU: Optional[float] = None
+DEFAULT_REJECT_BELOW_DNNU: Optional[float] = None
 
 
 @dataclass
@@ -71,17 +74,31 @@ class IntegratorConfig:
         If Simpson fails to converge (or returns a negative integral),
         fall back to trapezoid integration on the points that Simpson
         already evaluated.
+    reject_above_dnnu : float or None
+        If not None and the final ``dnnu`` exceeds this value, the result
+        is flagged as rejected: ``IntegrationResult.dnnu`` becomes ``nan``
+        and ``diagnostics['rejected'] = True`` with
+        ``diagnostics['rejected_reason'] = 'dnnu>reject_above_dnnu'``.
+        ``g2`` and the raw integration diagnostics are still returned for
+        inspection. Default ``None`` (no upper guard). The conventional
+        cosmological cut is 5.0 (matches the legacy gate of the upstream
+        Cobaya theory).
+    reject_below_dnnu : float or None
+        Symmetric lower guard. If not None and dnnu falls below this
+        value, the result is flagged as rejected. Useful to reject
+        spurious negative dnnu when ``fallback_to_trapz_on_fail=False``.
+        Default ``None``.
     """
 
     dnnu_tol_abs: float = DEFAULT_DNNU_TOL_ABS
     simpson_rtol: float = DEFAULT_SIMPSON_RTOL
-    dnnu_max: Optional[float] = DEFAULT_DNNU_MAX
-    return_nan_if_dnnu_exceeds_max: bool = DEFAULT_RETURN_NAN_IF_DNNU_EXCEEDS_MAX
     simpson_max_depth: int = DEFAULT_SIMPSON_MAX_DEPTH
     simpson_max_evals: int = DEFAULT_SIMPSON_MAX_EVALS
     edge_trim: float = DEFAULT_EDGE_TRIM
     clamp_log10omega_nonfinite_to: float = DEFAULT_CLAMP_LOG10OMEGA_NONFINITE_TO
     fallback_to_trapz_on_fail: bool = DEFAULT_FALLBACK_TRAPZ_ON_FAIL
+    reject_above_dnnu: Optional[float] = DEFAULT_REJECT_ABOVE_DNNU
+    reject_below_dnnu: Optional[float] = DEFAULT_REJECT_BELOW_DNNU
 
 
 @dataclass
@@ -96,6 +113,8 @@ class IntegrationResult:
     * the relative difference between Simpson and trapz
     * which method actually produced the final number (Simpson or trapz fallback)
     * full Simpson convergence diagnostics
+    * if a guard was tripped: ``rejected``, ``rejected_reason``,
+      ``dnnu_raw`` (the dnnu before the guard masked it to NaN)
     """
 
     dnnu: float
@@ -131,6 +150,12 @@ def compute_g2(
     -------
     g2 : float
     diag : dict
+
+    Notes
+    -----
+    The dnnu reject guards (``reject_above_dnnu`` / ``reject_below_dnnu``)
+    are applied in :func:`compute_dnnu`, NOT here. ``compute_g2`` always
+    returns the raw integral.
     """
     cfg = config or IntegratorConfig()
 
@@ -220,6 +245,43 @@ def compute_g2(
 # -----------------------------------------------------------------------------
 # Public wrappers
 # -----------------------------------------------------------------------------
+def _apply_dnnu_guards(
+    dnnu_raw: float,
+    cfg: IntegratorConfig,
+    diag: Dict[str, Any],
+) -> float:
+    """Apply optional upper / lower guards on dnnu.
+
+    Mutates ``diag`` in place to record the guard outcome and returns the
+    guarded dnnu value (``nan`` if any guard tripped, otherwise unchanged).
+    """
+    rejected = False
+    reason = None
+
+    if not np.isfinite(dnnu_raw):
+        rejected = True
+        reason = "dnnu_nonfinite"
+    else:
+        if cfg.reject_above_dnnu is not None and dnnu_raw > float(cfg.reject_above_dnnu):
+            rejected = True
+            reason = f"dnnu>{float(cfg.reject_above_dnnu):g}"
+        elif cfg.reject_below_dnnu is not None and dnnu_raw < float(cfg.reject_below_dnnu):
+            rejected = True
+            reason = f"dnnu<{float(cfg.reject_below_dnnu):g}"
+
+    diag["rejected"] = bool(rejected)
+    diag["rejected_reason"] = reason if rejected else ""
+    diag["reject_above_dnnu"] = (
+        float(cfg.reject_above_dnnu) if cfg.reject_above_dnnu is not None else None
+    )
+    diag["reject_below_dnnu"] = (
+        float(cfg.reject_below_dnnu) if cfg.reject_below_dnnu is not None else None
+    )
+    diag["dnnu_raw"] = float(dnnu_raw)
+
+    return float("nan") if rejected else float(dnnu_raw)
+
+
 def compute_dnnu(
     prediction_or_f,
     log10OmegaGW=None,
@@ -245,6 +307,22 @@ def compute_dnnu(
 
            result = compute_dnnu(f, log10OmegaGW, H0=67.32)
 
+    Optional reject guards
+    ----------------------
+    Pass an :class:`IntegratorConfig` with ``reject_above_dnnu`` (and/or
+    ``reject_below_dnnu``) to turn on a physical cut::
+
+        cfg = IntegratorConfig(reject_above_dnnu=5.0)
+        r = compute_dnnu(pred, H0=67.32, config=cfg)
+        if np.isnan(r.dnnu):
+            print("rejected:", r.diagnostics["rejected_reason"])
+            print("raw value was:", r.diagnostics["dnnu_raw"])
+
+    When a guard trips, ``IntegrationResult.dnnu`` is set to ``nan`` and
+    the diagnostics dict carries the keys ``rejected`` (bool),
+    ``rejected_reason`` (str), and ``dnnu_raw`` (the un-masked value).
+    ``g2`` and all integration diagnostics are returned unchanged.
+
     Parameters
     ----------
     prediction_or_f : Mapping or array_like
@@ -259,7 +337,9 @@ def compute_dnnu(
     Returns
     -------
     IntegrationResult
-        ``.dnnu``, ``.g2``, and ``.diagnostics``.
+        ``.dnnu``, ``.g2``, and ``.diagnostics``. ``.dnnu`` is ``nan`` if
+        a configured reject guard tripped; check
+        ``.diagnostics['rejected']``.
     """
     if isinstance(prediction_or_f, Mapping):
         if log10OmegaGW is not None:
@@ -283,30 +363,13 @@ def compute_dnnu(
         f_like = prediction_or_f
         log_like = log10OmegaGW
 
-        cfg = config or IntegratorConfig()
+    cfg = config or IntegratorConfig()
 
     g2, diag = compute_g2(f_like, log_like, H0=H0, config=cfg)
-    dnnu_raw = float(g2_to_dnnu(g2, H0))
+    dnnu_raw = g2_to_dnnu(g2, H0)
+    dnnu = _apply_dnnu_guards(dnnu_raw, cfg, diag)
 
-    diag["dnnu_raw"] = float(dnnu_raw)
-    diag["dnnu_gate_enabled"] = cfg.dnnu_max is not None
-    diag["dnnu_max"] = None if cfg.dnnu_max is None else float(cfg.dnnu_max)
-    diag["dnnu_rejected_by_max_gate"] = False
-
-    if cfg.dnnu_max is not None and dnnu_raw > float(cfg.dnnu_max):
-        diag["dnnu_rejected_by_max_gate"] = True
-        diag["dnnu_reject_reason"] = (
-            f"dnnu_raw={dnnu_raw:.16e} exceeds dnnu_max={float(cfg.dnnu_max):.16e}"
-        )
-
-        if cfg.return_nan_if_dnnu_exceeds_max:
-            return IntegrationResult(
-                dnnu=float("nan"),
-                g2=float(g2),
-                diagnostics=diag,
-            )
-
-    return IntegrationResult(dnnu=float(dnnu_raw), g2=float(g2), diagnostics=diag)
+    return IntegrationResult(dnnu=float(dnnu), g2=float(g2), diagnostics=diag)
 
 
 def compute_dnnu_from_predictor(
@@ -318,20 +381,22 @@ def compute_dnnu_from_predictor(
     """Convenience: run the predictor and integrate in one call.
 
     ``params`` must contain the key ``"H0"`` along with whatever else
-    ``predictor.predict`` requires.
+    ``predictor.predict`` requires. Reject guards configured on
+    ``IntegratorConfig`` apply here as well.
 
     Example
     -------
     >>> from sagenetgw.classes import GWPredictor
-    >>> from sagenet_dnnu import compute_dnnu_from_predictor
+    >>> from sagenet_dnnu import compute_dnnu_from_predictor, IntegratorConfig
     >>> predictor = GWPredictor(model_type="Transformer", device="cpu")
+    >>> cfg = IntegratorConfig(reject_above_dnnu=5.0)   # legacy gate
     >>> result = compute_dnnu_from_predictor(predictor, {
     ...     "r": 3.9585109e-05, "n_t": 1.0116972,
     ...     "kappa10": 110.42477, "T_re": 0.17453859, "DN_re": 39.366618,
     ...     "Omega_bh2": 0.0223828, "Omega_ch2": 0.1201075,
     ...     "H0": 67.32117, "A_s": 2.100549e-9,
-    ... })
-    >>> print(result.dnnu)
+    ... }, config=cfg)
+    >>> print(result.dnnu, result.diagnostics["rejected"])
     """
     if "H0" not in params:
         raise KeyError("`params` must contain 'H0'.")
@@ -347,8 +412,8 @@ __all__ = [
     "DEFAULT_EDGE_TRIM",
     "DEFAULT_CLAMP_LOG10OMEGA_NONFINITE_TO",
     "DEFAULT_FALLBACK_TRAPZ_ON_FAIL",
-    "DEFAULT_DNNU_MAX",
-    "DEFAULT_RETURN_NAN_IF_DNNU_EXCEEDS_MAX",
+    "DEFAULT_REJECT_ABOVE_DNNU",
+    "DEFAULT_REJECT_BELOW_DNNU",
     "IntegratorConfig",
     "IntegrationResult",
     "compute_g2",
