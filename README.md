@@ -147,7 +147,7 @@ from sagenetgw.classes import GWPredictor
 import numpy as np
 from matplotlib import pyplot as plt
 
-from sagenet_dnnu import compute_dnnu
+from sagenet_dnnu import compute_dnnu, IntegratorConfig
 
 predictor = GWPredictor(model_type="Transformer", device="cpu")
 
@@ -164,17 +164,26 @@ prediction = predictor.predict({
 })
 
 # Integrate the SGWB spectrum into Delta N_eff.
-result = compute_dnnu(prediction, H0=67.32117)
+# `reject_above_dnnu=5.0` enables the standard cosmological cut: points with
+# dnnu > 5 are physically excluded by BBN/CMB and almost always sit in
+# SageNet's extrapolation region, so we mask them to NaN by default. The
+# pre-mask value is preserved in result.diagnostics["dnnu_raw"].
+config = IntegratorConfig(reject_above_dnnu=5.0)
+result = compute_dnnu(prediction, H0=67.32117, config=config)
 
-print("dnnu =", result.dnnu)
-print("g2   =", result.g2)
-print("method:", result.diagnostics["simpson_method_final"])
+if result.diagnostics["rejected"]:
+    print(f"point rejected: {result.diagnostics['rejected_reason']} "
+          f"(raw dnnu was {result.diagnostics['dnnu_raw']:.3f})")
+else:
+    print(f"dnnu   = {result.dnnu:.6e}")
+    print(f"g2     = {result.g2:.6e}")
+    print(f"method = {result.diagnostics['simpson_method_final']}")
 
 pred_coords = np.column_stack((prediction["f"], prediction["log10OmegaGW"]))
 plt.plot(pred_coords[:, 0], pred_coords[:, 1], "--",
          color="royalblue", marker=".")
-plt.xlabel("f or log10(f)")
-plt.ylabel("log10 Omega_GW")
+plt.xlabel("log10(f)")
+plt.ylabel(r"$\log_{10}\,\Omega_{\rm GW}$")
 plt.show()
 ```
 
